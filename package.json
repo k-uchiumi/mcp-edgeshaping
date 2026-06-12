@@ -1,0 +1,19 @@
+{
+  "name": "mcp-edgeshaping",
+  "version": "1.0.0",
+  "description": "MCP Server for EdgeShaping — AI bot observation data by mare interno",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2"
+  }
+}
