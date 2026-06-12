@@ -3,10 +3,9 @@
  * Transport: Streamable HTTP (MCP 2025-03-26)
  * Auth:      Bearer token (MCP_API_KEY env)
  */
-import express           from 'express';
-import rateLimit         from 'express-rate-limit';
-import { randomUUID }    from 'crypto';
-import { McpServer }     from '@modelcontextprotocol/sdk/server/mcp.js';
+import express        from 'express';
+import rateLimit      from 'express-rate-limit';
+import { McpServer }  from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { TOOLS, callTool } from './tools.js';
 
@@ -19,11 +18,12 @@ if ( ! MCP_API_KEY ) {
 }
 
 const app = express();
+
+// Railway はリバースプロキシ経由なので trust proxy が必要
+app.set( 'trust proxy', 1 );
 app.use( express.json() );
 
-// -----------------------------------------------------------------------
-// レートリミット: 1分間に60リクエストまで
-// -----------------------------------------------------------------------
+// レートリミット
 app.use( '/mcp', rateLimit( {
   windowMs: 60 * 1000,
   max: 60,
@@ -32,9 +32,7 @@ app.use( '/mcp', rateLimit( {
   message: { error: 'Too many requests' },
 } ) );
 
-// -----------------------------------------------------------------------
-// Bearer Token 認証ミドルウェア
-// -----------------------------------------------------------------------
+// Bearer Token 認証
 function authenticate( req, res, next ) {
   const auth = req.headers['authorization'] ?? '';
   if ( auth !== `Bearer ${MCP_API_KEY}` ) {
@@ -43,21 +41,18 @@ function authenticate( req, res, next ) {
   next();
 }
 
-// -----------------------------------------------------------------------
-// MCPサーバーファクトリ（リクエストごとに新規インスタンス）
-// -----------------------------------------------------------------------
+// MCPサーバーファクトリ（stateless: リクエストごとに新規）
 function createMcpServer() {
   const server = new McpServer( {
     name:    'edgeshaping-mcp',
     version: '1.0.0',
   } );
 
-  // ツール一覧を登録
   for ( const tool of TOOLS ) {
     server.tool(
       tool.name,
       tool.description,
-      tool.inputSchema.properties,
+      tool.schema,
       async ( args ) => callTool( tool.name, args )
     );
   }
@@ -65,14 +60,11 @@ function createMcpServer() {
   return server;
 }
 
-// -----------------------------------------------------------------------
-// POST /mcp  — MCP Streamable HTTP エンドポイント
-// -----------------------------------------------------------------------
+// POST /mcp
 app.post( '/mcp', authenticate, async ( req, res ) => {
   const server    = createMcpServer();
   const transport = new StreamableHTTPServerTransport( {
-    sessionIdGenerator: () => randomUUID(),
-    enableJsonResponse: true,
+    sessionIdGenerator: undefined, // stateless
   } );
 
   res.on( 'close', () => {
@@ -84,40 +76,14 @@ app.post( '/mcp', authenticate, async ( req, res ) => {
     await server.connect( transport );
     await transport.handleRequest( req, res, req.body );
   } catch ( err ) {
-    console.error( 'MCP handler error:', err );
+    console.error( 'MCP error:', err );
     if ( ! res.headersSent ) {
       res.status( 500 ).json( { error: 'Internal server error' } );
     }
   }
 } );
 
-// GET /mcp  — SSEセッション（Streamable HTTPのセッション管理用）
-app.get( '/mcp', authenticate, async ( req, res ) => {
-  const server    = createMcpServer();
-  const transport = new StreamableHTTPServerTransport( {
-    sessionIdGenerator: () => randomUUID(),
-    enableJsonResponse: true,
-  } );
-
-  res.on( 'close', () => {
-    transport.close();
-    server.close();
-  } );
-
-  try {
-    await server.connect( transport );
-    await transport.handleRequest( req, res );
-  } catch ( err ) {
-    console.error( 'MCP GET error:', err );
-    if ( ! res.headersSent ) {
-      res.status( 500 ).json( { error: 'Internal server error' } );
-    }
-  }
-} );
-
-// -----------------------------------------------------------------------
-// ヘルスチェック（Railway のデプロイ確認用・認証不要）
-// -----------------------------------------------------------------------
+// ヘルスチェック（認証不要）
 app.get( '/health', ( _req, res ) => {
   res.json( { status: 'ok', service: 'edgeshaping-mcp', version: '1.0.0' } );
 } );
